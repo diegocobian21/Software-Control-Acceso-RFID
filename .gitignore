@@ -1,0 +1,13 @@
+# Carpetas de compilación y de Visual Studio — no aportan nada al código
+# y generan ruido/conflictos entre máquinas distintas.
+bin/
+obj/
+.vs/
+*.user
+*.suo
+
+# Credenciales reales de la base de datos: NUNCA se suben.
+# El repo trae App.config.example como plantilla; cada quien copia
+# App.config.example -> App.config en su propia máquina y pone ahí
+# su contraseña real (ese archivo real se queda solo en disco local).
+**/App.config

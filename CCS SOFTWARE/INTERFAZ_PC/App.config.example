@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<configuration>
+  <connectionStrings>
+    <!--
+      Esta es una PLANTILLA, no la configuración real.
+
+      Pasos para usarla:
+      1. Copia este archivo y renómbralo a "App.config" (en la misma carpeta).
+      2. Reemplaza Uid y Pwd por tu usuario y contraseña reales de MySQL.
+      3. El archivo "App.config" real queda ignorado por git (ver .gitignore
+         en la raíz del repo), así que tu contraseña nunca se sube.
+    -->
+    <add name="css"
+         connectionString="Server=localhost;Database=css;Uid=TU_USUARIO;Pwd=TU_CONTRASEÑA;"
+         providerName="MySql.Data.MySqlClient" />
+  </connectionStrings>
+</configuration>
