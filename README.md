@@ -2,7 +2,7 @@
 
 App de control de acceso con RFID (guardias, usuarios registrados e invitados)
 hecha en WinForms (C#, .NET 6) con MySQL, y un Arduino que lee las tarjetas
-NFC por puerto serial.
+NFC por puerto serial (COM6).
 
 ## Configuración inicial (antes de compilar)
 
@@ -13,152 +13,106 @@ se ignora por git — ver `.gitignore`). Para dejarlo listo:
    `CCS SOFTWARE/INTERFAZ_PC/App.config` (mismo folder).
 2. Abre ese `App.config` nuevo y reemplaza `Uid`/`Pwd` por tu usuario y
    contraseña reales de MySQL.
-3. Corre `crear_base_datos_CSS.sql` en MySQL Workbench para crear la base
-   `CSS` y sus tablas.
+3. Corre `crear_base_datos_CSS.sql` (en la raíz del repo) en MySQL
+   Workbench para crear la base `CSS` y todas sus tablas, ya con las
+   columnas correctas (incluida `administradores`, que no existía en el
+   proyecto original).
 
-Con eso el proyecto compila y conecta a tu base local.
+## Compilar y correr
 
----
+1. Abre `CCS SOFTWARE/INTERFAZ_PC/INTERFAZ_PC.sln` en Visual Studio 2022.
+2. Compila una vez para que restaure los paquetes NuGet (`MySql.Data`,
+   `BCrypt.Net-Next`, `System.Configuration.ConfigurationManager`).
+3. Confirma que tu Arduino esté conectado y aparezca como **COM6** en el
+   Administrador de dispositivos (si tu Arduino usa otro puerto, cambia
+   `"COM6"` en `Guests.cs`, `Monitoring.cs`, `RegisterUsers.cs` y
+   `RegisterGuards.cs` — son los únicos 4 formularios que abren el
+   puerto serial).
+4. Antes del primer login, genera el administrador inicial (ver abajo).
+5. Compila y corre (F5).
 
-Lo que sigue resume qué cambió en el refactor de seguridad/arquitectura, qué
-tienes que hacer tú manualmente en la base de datos, y qué quedó pendiente.
+### Generar el primer administrador
 
-## 1. Qué se corrigió
+El script SQL no inserta ningún administrador (las contraseñas se guardan
+como hash BCrypt, nunca en texto plano, así que no se puede "precargar" un
+INSERT con la contraseña visible). Para crear el primero:
+
+1. Agrega temporalmente estas dos líneas al inicio de `Main()` en
+   `Program.cs`, antes de crear el `ApplicationContext`:
+   ```csharp
+   Console.WriteLine(INTERFAZ_PC.Security.PasswordHasher.Hash("tu_password_aqui"));
+   return;
+   ```
+2. Corre el programa una vez (verás el hash en la ventana de consola),
+   copia el hash y **borra esas dos líneas**.
+3. Inserta el administrador con ese hash:
+   ```sql
+   INSERT INTO administradores (USUARIO, CLAVE)
+   VALUES ('CssAdmin', '<pega_aquí_el_hash_generado>');
+   ```
+
+## Arquitectura
+
+```
+Models/            Usuario, Guardia, Invitado — únicas clases que representan
+                   estos datos en todo el proyecto (antes había varias
+                   clases distintas y duplicadas para lo mismo).
+Repositories/      Todo el acceso a MySQL: UsuarioRepository, GuardiaRepository,
+                   InvitadoRepository, AdministradorRepository. Consultas
+                   parametrizadas (sin concatenar strings), sin dependencia
+                   de System.Windows.Forms — no muestran MessageBox, solo
+                   devuelven datos/bool; la UI decide qué mostrar.
+Data/              ConnectionFactory.cs — crea la conexión MySQL leyendo
+                   la cadena de conexión desde App.config (sección
+                   <connectionStrings>, nombre "css").
+Security/          PasswordHasher.cs — hash y verificación de contraseñas
+                   con BCrypt.
+Navigation/        FormNavigator.cs — navegación entre pantallas que de
+                   verdad libera memoria (ver más abajo).
+```
+
+## Navegación entre formularios
+
+El proyecto usa dos patrones distintos, según si la pantalla usa el puerto
+serial COM6 o no:
+
+- **Pantallas normales** (Login, Initiation_Admin, Initiation_Guards,
+  Ausers, Guards, AReport, GReport): usan `FormNavigator.NavegarA(this, new
+  Destino())`, que muestra la pantalla destino y cierra (`Close()`) la
+  actual — a diferencia del patrón viejo (`Show()` + `Hide()`), esto sí
+  destruye la ventana anterior en vez de dejarla oculta y viva en memoria
+  ("ventana fantasma").
+- **Las 4 pantallas que usan el puerto COM6** (`Guests`, `Monitoring`,
+  `RegisterGuards`, `RegisterUsers`): nunca usan `FormNavigator`. Siempre
+  se abren como diálogo modal (`ShowDialog()`) desde una pantalla que no
+  usa el puerto, y su botón de "volver" solo hace `this.Close()` para
+  regresar a quien las abrió. Así nunca hay dos formularios compitiendo
+  por el mismo puerto COM6 al mismo tiempo.
+
+## Seguridad: qué se corrigió respecto al proyecto original
 
 | Problema original | Solución aplicada |
 |---|---|
-| SQL armado con concatenación de strings (inyección SQL) en `DBconexion.cs`, `RegisterUsers.cs`, `RegisterGuards.cs`, `Guests.cs` | Todas las consultas ahora usan `MySqlParameter` (`@nombre`, `@telefono`, etc.) |
-| Login con usuario/contraseña hardcodeados (`"Css"/"safe123"`, `"CssAdmin"/"safe123"`) en `Login.cs` | Login valida contra la base de datos usando hash BCrypt. Admin valida contra una tabla nueva `administradores` (ver sección 2) |
-| Contraseñas en texto plano en las columnas `CLAVE` / `CONTRASEÑA` | Se hashean con `BCrypt.Net-Next` antes de insertarse (`Security/PasswordHasher.cs`) |
-| Cadena de conexión hardcodeada y repetida en cada método de `DBconexion.cs` | Ahora vive en un solo lugar: `App.config` → `<connectionStrings>`, leída por `Data/ConnectionFactory.cs` |
-| Conexiones abiertas sin `using` (fuga de conexiones si hay excepción) | Todo el acceso a datos nuevo usa `using` |
-| `List<object>` + casteo manual | Listas tipadas: `List<Usuario>`, `List<Guardia>`, `List<Invitado>` (carpeta `Models/`) |
-| Toda la lógica de acceso a datos mezclada en una sola clase `DBconexion` | Separada en `Repositories/UsuarioRepository.cs`, `GuardiaRepository.cs`, `InvitadoRepository.cs`, `AdministradorRepository.cs` |
-| Referencia rota a MySql.Data con ruta absoluta de la PC del desarrollador original | Se quitó; el `PackageReference` de NuGet ya trae el ensamblado |
+| SQL armado con concatenación de strings (inyección SQL) | Todas las consultas usan `MySqlParameter` (`@nombre`, `@telefono`, etc.) |
+| Login con usuario/contraseña hardcodeados en el código | Login valida contra la base de datos; el admin tiene su propia tabla `administradores` |
+| Contraseñas en texto plano en las columnas `CLAVE` / `CONTRASEÑA` | Se hashean con `BCrypt.Net-Next` antes de guardarse (`Security/PasswordHasher.cs`) |
+| Cadena de conexión hardcodeada y repetida en cada método de una clase `DBconexion` | Vive en un solo lugar: `App.config`, leída por `Data/ConnectionFactory.cs`. La clase `DBconexion` ya no existe. |
+| Conexiones abiertas sin `using` (fuga de conexiones si hay excepción) | Todo el acceso a datos usa `using` |
+| `List<object>` + casteo manual, varias clases duplicadas para el mismo dato | Modelos tipados únicos en `Models/` (`Usuario`, `Guardia`, `Invitado`) |
+| Navegación con `Show()` + `Hide()` acumulando ventanas ocultas en memoria | `FormNavigator` (cierra de verdad) + diálogo modal para las pantallas que usan el puerto serial |
 
-### Archivos nuevos
-```
-Data/ConnectionFactory.cs
-Models/Usuario.cs
-Models/Guardia.cs
-Models/Invitado.cs
-Repositories/UsuarioRepository.cs
-Repositories/GuardiaRepository.cs
-Repositories/InvitadoRepository.cs
-Repositories/AdministradorRepository.cs
-Security/PasswordHasher.cs
-```
+## Pendiente / posibles siguientes pasos
 
-### Archivos modificados
-```
-App.config
-INTERFAZ_PC.csproj
-DBconexion.cs      (ahora es una fachada de compatibilidad, ver sección 4)
-Login.cs
-RegisterUsers.cs
-RegisterGuards.cs
-Guests.cs
-```
-
-### Archivos NO tocados (siguen igual que el original)
-`Ausers.cs`, `Guards.cs`, `Monitoring.cs`, `NFC_Admins.cs`, `nfc_guards.cs`,
-`AReport.cs`, `GReport.cs`, `StartProgram.cs`, `Initiation_Admin.cs`,
-`Initiation_Guards.cs`, `Entidades.cs`, `Form1.cs`, `Program.cs`, y todos
-los `*.Designer.cs` / `*.resx`. Siguen funcionando porque `DBconexion.cs`
-se dejó como fachada (ver sección 4).
-
-## 2. Pasos que debes correr en la base de datos ANTES de compilar
-
-**a) Amplía el tamaño de las columnas de contraseña.** Un hash BCrypt mide
-~60 caracteres. Si tus columnas `CLAVE` (tabla `usuarios`) y `CONTRASEÑA`
-(tabla `guardias`) son `VARCHAR` más cortas, el insert va a truncar el hash
-y el login nunca va a funcionar:
-
-```sql
-ALTER TABLE usuarios  MODIFY CLAVE       VARCHAR(255) NOT NULL;
-ALTER TABLE guardias  MODIFY CONTRASEÑA  VARCHAR(255) NOT NULL;
-```
-
-**b) Crea la tabla `administradores`.** No existía en el esquema original
-— el login de admin estaba hardcodeado en el código. Ahora necesita su
-propia tabla:
-
-```sql
-CREATE TABLE administradores (
-    id      INT AUTO_INCREMENT PRIMARY KEY,
-    USUARIO VARCHAR(50)  NOT NULL UNIQUE,
-    CLAVE   VARCHAR(255) NOT NULL
-);
-```
-
-**c) Genera el hash para el primer administrador.** Como las contraseñas
-ya no se escriben en el código, necesitas generar un hash BCrypt una sola
-vez. La forma más simple: agrega temporalmente estas dos líneas al inicio
-de `Program.cs` (dentro de `Main`, antes de `Application.Run`), corre el
-programa una vez, copia el hash que aparece en la consola, y luego
-**borra esas dos líneas**:
-
-```csharp
-Console.WriteLine(INTERFAZ_PC.Security.PasswordHasher.Hash("tu_password_aqui"));
-return;
-```
-
-Con ese hash, inserta el admin:
-
-```sql
-INSERT INTO administradores (USUARIO, CLAVE)
-VALUES ('CssAdmin', '<pega_aquí_el_hash_generado>');
-```
-
-**d) Migra las contraseñas existentes de `usuarios` y `guardias`.** Si ya
-tienes registros con contraseñas en texto plano, no hay forma automática
-de "hashear hacia atrás" — tienes dos opciones:
-- Pedir a cada usuario/guardia que resetee su contraseña (recomendado), o
-- Escribir un script de migración de una sola corrida que lea cada fila,
-  hashee el valor actual con `PasswordHasher.Hash(...)` y lo actualice con
-  `UPDATE ... WHERE id = @id`. Si quieres, te ayudo a escribirlo.
-
-## 3. Pasos para compilar
-
-1. Abre `CCS SOFTWARE/INTERFAZ_PC/INTERFAZ_PC.sln` en Visual Studio.
-2. Restaura paquetes NuGet (botón derecho en la solución → *Restore NuGet
-   Packages*, o simplemente compila y Visual Studio lo hace solo). Esto
-   va a descargar `BCrypt.Net-Next` y `System.Configuration.ConfigurationManager`,
-   que son nuevos.
-3. Revisa que `App.config` tenga los datos correctos de tu servidor MySQL
-   (usuario, contraseña, host) en `connectionStrings`.
-4. Corre los pasos de la sección 2 contra tu base de datos.
-5. Compila y corre.
-
-## 4. Sobre `DBconexion.cs`
-
-Se dejó como una **fachada de compatibilidad**: internamente ya delega en
-los repositorios nuevos (parametrizados, con `using`), pero mantiene los
-mismos nombres de método (`consulta`, `consultaGuardias`, `eliminar`, etc.)
-para que `Ausers.cs`, `Guards.cs` y `StartProgram.cs` —que no se tocaron—
-sigan compilando sin cambios.
-
-Cuando tengas tiempo de revisar esas pantallas, lo ideal es que dejen de
-usar `DBconexion` y llamen directamente a `UsuarioRepository` /
-`GuardiaRepository`, y entonces puedes borrar `DBconexion.cs`.
-
-## 5. Qué quedó pendiente (fuera del alcance de este refactor)
-
-- **Multi-targeting en `obj/`**: se veían builds viejos de net5.0 y
-  netcoreapp3.0. El `.csproj` ya apunta solo a `net6.0-windows`; borra las
-  carpetas `bin/` y `obj/` una vez antes de compilar para limpiar rastros
-  viejos.
-- **Convenciones de nombres inconsistentes** (`Guards.cs` vs `guardias.cs`,
-  propiedades en minúscula en `Entidades.cs`): no se tocó para no romper
-  los formularios no refactorizados, que dependen de esos nombres exactos.
-  Es un buen siguiente paso una vez que decidas refactorizar esas pantallas
-  también.
-- **Manejo de errores**: los repositorios nuevos todavía hacen
-  `Console.WriteLine` en el catch (en vez de un logger real). En una app
-  WinForms nadie ve la consola — valdría la pena mostrar el error al
-  usuario o usar un logger (Serilog, por ejemplo).
-- **No hay tests.** Ninguno de los proyectos .NET que mencionaste en tu
-  perfil (este ni los otros) tiene pruebas unitarias todavía; los
-  repositorios nuevos están diseñados para ser fáciles de probar (reciben
-  `ConnectionFactory` implícitamente, podrías inyectar la conexión si más
-  adelante quieres mockear la BD).
+- **No hay tests.** Los repositorios están pensados para ser fáciles de
+  probar (reciben la conexión a través de `ConnectionFactory`), pero no
+  hay pruebas unitarias todavía.
+- **Manejo de errores**: los repositorios hacen `Console.WriteLine` en el
+  catch en vez de un logger real — en una app WinForms nadie ve la
+  consola en producción. Valdría la pena un logger (Serilog, por
+  ejemplo) o reportar el error de otra forma hacia la UI.
+- **`Program.cs`** actualmente puede estar apuntando a una pantalla
+  distinta de `StartProgram`/`Login` para pruebas rápidas de un
+  formulario en particular — antes de distribuir una versión final,
+  confirma que `Application.Run`/`ApplicationContext` en `Program.cs`
+  arranque en la pantalla que de verdad quieres como punto de entrada
+  (por ejemplo, `StartProgram` para pasar primero por el login).
