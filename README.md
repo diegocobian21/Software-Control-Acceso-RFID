@@ -1,6 +1,6 @@
 # CCS SOFTWARE / INTERFAZ_PC
 
-App de control de acceso con NFC (guardias, usuarios registrados e invitados)
+App de control de acceso con RFID (guardias, usuarios registrados e invitados)
 hecha en WinForms (C#, .NET 6) con MySQL, y un Arduino que lee las tarjetas
 NFC por puerto serial.
 
