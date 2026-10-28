@@ -4,6 +4,9 @@ App de control de acceso con RFID (guardias, usuarios registrados e invitados)
 hecha en WinForms (C#, .NET 6) con MySQL, y un Arduino que lee las tarjetas
 NFC por puerto serial (COM6).
 
+## Circuito Arduino RFID
+<img width="720" height="1280" alt="circuito RFID" src="https://github.com/user-attachments/assets/bf2b6f64-96ce-429d-9df2-cc92b357060a" />
+
 ## Configuración inicial (antes de compilar)
 
 Este repo NO incluye `App.config` (trae tu contraseña real de MySQL, así que
